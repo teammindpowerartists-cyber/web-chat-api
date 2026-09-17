@@ -1,5 +1,5 @@
 (function () {
-  const API_URL = "https://mpa-chatbot-backend.vercel.app/api/chat";
+  const API_URL = "https://web-chat-api-fwsg.vercel.app/api/chat";
 
   const SESSION_KEY = "mpa_chat_session";
   function getSessionId() {

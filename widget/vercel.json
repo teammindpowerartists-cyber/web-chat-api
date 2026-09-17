@@ -1,20 +1,4 @@
 {
   "version": 2,
-  "public": true,
-  "builds": [
-    {
-      "src": "mpa-chat.js",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "mpa-chat.css",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/$1"
-    }
-  ]
+  "outputDirectory": "."
 }

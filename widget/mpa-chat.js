@@ -15,12 +15,15 @@
   const sessionId = getSessionId();
 
   root.insertAdjacentHTML("beforeend", `
-    <button id="mpa-chat-btn" aria-label="Open chat">💬</button>
+    <button id="mpa-chat-btn" aria-label="Chat with us">
+      <span class="mpa-chat-btn-icon">💬</span>
+      <span class="mpa-chat-btn-label">Chat with us</span>
+    </button>
     <div id="mpa-chat-panel">
       <div id="mpa-chat-header">
         <div>
-          <h3>Mind Power Artists</h3>
-          <small>OG Assistant • Online</small>
+          <h3>OG Support</h3>
+          <small>Mind Power Artists • Online</small>
         </div>
         <button id="mpa-chat-close" aria-label="Close chat">×</button>
       </div>
@@ -51,9 +54,15 @@
     return div;
   }
 
+  function isMobile() {
+    return window.matchMedia("(max-width: 480px)").matches;
+  }
+
   function openPanel() {
     panel.classList.add("open");
-    input.focus();
+    if (isMobile()) document.body.classList.add("mpa-chat-open");
+    // Delay focus slightly on mobile to avoid scroll jump
+    setTimeout(() => input.focus(), 100);
     if (!opened) {
       opened = true;
       addMsg(
@@ -63,15 +72,20 @@
     }
   }
 
+  function closePanel() {
+    panel.classList.remove("open");
+    document.body.classList.remove("mpa-chat-open");
+  }
+
   btn.addEventListener("click", () => {
     if (panel.classList.contains("open")) {
-      panel.classList.remove("open");
+      closePanel();
     } else {
       openPanel();
     }
   });
 
-  closeBtn.addEventListener("click", () => panel.classList.remove("open"));
+  closeBtn.addEventListener("click", closePanel);
 
   async function send() {
     const text = input.value.trim();
@@ -93,7 +107,7 @@
         body: JSON.stringify({
           session_id: sessionId,
           message: text,
-          user_name: "Website Visitor",
+          user_name: "",
           page_url: location.href,
         }),
       });

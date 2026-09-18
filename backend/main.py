@@ -19,34 +19,93 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# session_id -> {"history": [...], "booking": {"service": str, "name": str, "phone": str}}
 SESSIONS: dict = {}
 
 LEAD_WEBHOOK_URL = os.getenv("LEAD_WEBHOOK_URL", "").strip()
 
-LEAD_PATTERN = re.compile(
-    r"##LEAD##\s*\n"
-    r"\s*name\s*:\s*(?P<name>[^\n]+)\n"
-    r"\s*phone\s*:\s*(?P<phone>[^\n]+)\n"
-    r"\s*service\s*:\s*(?P<service>[^\n]+)",
-    re.IGNORECASE,
-)
+# ---------------------------------------------------------------
+# SERVICE KEYWORD DETECTION (deterministic, not AI-driven)
+# ---------------------------------------------------------------
+SERVICE_KEYWORDS = {
+    "telepathy behavior": "Telepathy Behavior Modification",
+    "telepathy service": "Telepathy Behavior Modification",
+    "telepathy program": "Telepathy Behavior Modification",
+    "telepathy": "Telepathy Behavior Modification",
+    "hypnotherapy": "Hypnotherapy",
+    "hypnosis": "Hypnotherapy",
+    "hair fall": "Remote Skin & Hair Healing",
+    "hair healing": "Remote Skin & Hair Healing",
+    "skin healing": "Remote Skin & Hair Healing",
+    "skin & hair": "Remote Skin & Hair Healing",
+    "skin and hair": "Remote Skin & Hair Healing",
+    "affirmation": "Personalized Recorded Affirmations",
+    "8d": "Personalized Recorded Affirmations",
+    "hypnoslim": "HypnoSlim",
+    "weight loss": "HypnoSlim",
+    "weight management": "HypnoSlim",
+    "relationship healing": "Remote Relationship Healing",
+    "aura cleansing": "Aura Cleansing & Energy Boosting",
+    "aura healing": "Aura Cleansing & Energy Boosting",
+    "aura": "Aura Cleansing & Energy Boosting",
+    "hormonal healing": "Daily Hormonal Healing",
+    "hormone healing": "Daily Hormonal Healing",
+    "hormonal imbalance": "Daily Hormonal Healing",
+    "mind strengthening": "Daily Mind Strengthening Healing",
+    "brain fog": "Daily Mind Strengthening Healing",
+    "mental clarity": "Daily Mind Strengthening Healing",
+    "emotional healing": "Remote Emotional & Psychological Healing",
+    "energy healing": "Daily Energy Healing Support",
+    "energy support": "Daily Energy Healing Support",
+}
+
+BOOKING_INTENT_KEYWORDS = [
+    "book", "booking", "book karna", "booking karni", "book kaise",
+    "contact", "talk to someone", "talk to human", "speak to someone",
+    "want to proceed", "want to sign", "sign me up", "want to start",
+    "want to go ahead", "i want to book", "proceed", "get started",
+]
 
 
-def extract_lead(text: str):
-    m = LEAD_PATTERN.search(text)
-    if not m:
-        return None
-    return {
-        "name": m.group("name").strip(),
-        "phone": m.group("phone").strip(),
-        "service": m.group("service").strip(),
-    }
+def detect_service(message: str):
+    """Return canonical service name if the message names one, else None."""
+    msg_lower = message.lower().strip()
+    # Sort by length desc so longer phrases match first
+    for keyword in sorted(SERVICE_KEYWORDS.keys(), key=len, reverse=True):
+        if keyword in msg_lower:
+            return SERVICE_KEYWORDS[keyword]
+    return None
 
 
-def strip_lead_block(text: str) -> str:
-    return re.sub(r"##LEAD##.*$", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+def has_booking_intent(message: str) -> bool:
+    msg_lower = message.lower().strip()
+    return any(kw in msg_lower for kw in BOOKING_INTENT_KEYWORDS)
 
 
+def looks_like_name(message: str) -> bool:
+    """Rough check: 1-4 words, no digits, no question marks, not too long."""
+    text = message.strip()
+    if not text or len(text) > 60:
+        return False
+    if any(ch.isdigit() for ch in text):
+        return False
+    if "?" in text or "!" in text:
+        return False
+    words = text.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    # All words alphabetic (allow hyphens, dots, spaces)
+    return all(re.sub(r"[.\-']", "", w).isalpha() for w in words)
+
+
+def looks_like_phone(message: str) -> bool:
+    """Contains at least 7 digits."""
+    return len(re.sub(r"\D", "", message)) >= 7
+
+
+# ---------------------------------------------------------------
+# LEAD CAPTURE (Google Sheets)
+# ---------------------------------------------------------------
 async def send_lead_to_sheets(lead: dict, session_id: str) -> None:
     if not LEAD_WEBHOOK_URL:
         print("[LEAD] No LEAD_WEBHOOK_URL set — lead was NOT saved.")
@@ -61,11 +120,14 @@ async def send_lead_to_sheets(lead: dict, session_id: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.post(LEAD_WEBHOOK_URL, json=payload)
-            print(f"[LEAD] Saved to Google Sheet → {r.status_code}")
+            print(f"[LEAD] Saved → {r.status_code}")
     except Exception as e:
         print(f"[LEAD] Webhook failed: {e}")
 
 
+# ---------------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------------
 @app.get("/")
 async def root():
     return {"status": "MPA Chatbot API", "version": "1.0.0", "model": settings.OPENAI_MODEL}
@@ -88,49 +150,141 @@ async def health():
 @app.post("/api/chat", response_model=ChatMessageOut)
 async def chat(payload: ChatMessageIn):
     session_id = payload.session_id.strip() or str(uuid.uuid4())
+    message = payload.message.strip()
 
-    history = SESSIONS.get(session_id, [])
+    # Load or init session
+    state = SESSIONS.get(session_id)
+    if not state:
+        state = {"history": [], "booking": None}
+        SESSIONS[session_id] = state
+
+    history = state["history"]
+    booking = state["booking"]
+
+    # Log user message
     history.append({
         "role": "user",
-        "content": payload.message,
+        "content": message,
         "ts": datetime.now(timezone.utc).isoformat(),
     })
-    history = history[-40:]
+    history[:] = history[-40:]
 
+    # ===========================================================
+    # CASE 1: We are in a booking flow — Python handles everything
+    # ===========================================================
+    if booking is not None:
+        service = booking.get("service")
+        name = booking.get("name")
+        phone = booking.get("phone")
+
+        if not name:
+            # We asked for name; this message should be it
+            if looks_like_phone(message):
+                # User gave phone first — treat it as phone, keep asking for name
+                reply = "Thank you. And could you please share your full name?"
+                booking["phone"] = message
+            else:
+                booking["name"] = message
+                reply = f"Thank you, {message}. And your phone number with country code?"
+        elif not phone:
+            # We asked for phone; this message should be it
+            if looks_like_phone(message):
+                booking["phone"] = message
+                # Complete the lead
+                lead = {
+                    "name": booking["name"],
+                    "phone": booking["phone"],
+                    "service": booking["service"],
+                }
+                await send_lead_to_sheets(lead, session_id)
+                reply = (
+                    f"Thank you, {booking['name']}! Our team member will contact you soon "
+                    f"regarding {booking['service']}. 🌿"
+                )
+                state["booking"] = None  # clear booking flow
+            else:
+                # User didn't give phone — ask again
+                reply = (
+                    f"Thank you. Could you please share your phone number with country code?"
+                )
+        else:
+            # Safety fallback — shouldn't reach here
+            state["booking"] = None
+            reply = "Thank you! Our team member will be in touch soon. 🌿"
+
+        history.append({
+            "role": "assistant",
+            "content": reply,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+        return ChatMessageOut(
+            session_id=session_id,
+            answer=reply,
+            status="Interested",
+            service=service or "",
+            name=booking.get("name", "") if booking else "",
+        )
+
+    # ===========================================================
+    # CASE 2: Service name OR booking intent detected — start booking flow
+    # ===========================================================
+    detected_service = detect_service(message)
+    booking_intent = has_booking_intent(message)
+
+    if detected_service or booking_intent:
+        service = detected_service or ""  # may be empty if just "contact"
+        state["booking"] = {"service": service, "name": "", "phone": ""}
+
+        if service:
+            reply = (
+                f"I'd be glad to arrange this for you. Our team member will contact you "
+                f"personally. Could you please share your full name?"
+            )
+        else:
+            # Booking intent without a service — ask which service first
+            reply = (
+                "I'd be glad to arrange this for you. Which service would you like to book?"
+            )
+
+        history.append({
+            "role": "assistant",
+            "content": reply,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+        return ChatMessageOut(
+            session_id=session_id,
+            answer=reply,
+            status="Interested",
+            service=service,
+            name="",
+        )
+
+    # ===========================================================
+    # CASE 3: Everything else goes to the AI as before
+    # ===========================================================
     try:
         result = await generate_reply(
-            user_message=payload.message,
+            user_message=message,
             user_name=payload.user_name or "Visitor",
             history=history[:-1],
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI error: {exc}")
 
-    raw_answer = result.get("answer", "").strip() or "Sorry, please try again."
-
-    lead = extract_lead(raw_answer)
-    status = "Booked" if lead else "Interested"
-
-    if lead:
-        await send_lead_to_sheets(lead, session_id)
-
-    clean_answer = strip_lead_block(raw_answer)
-    if lead and not clean_answer:
-        clean_answer = f"Thank you, {lead['name']}! Our team member will contact you soon. 🌿"
+    answer = result.get("answer", "").strip() or "Sorry, please try again."
 
     history.append({
         "role": "assistant",
-        "content": clean_answer,
+        "content": answer,
         "ts": datetime.now(timezone.utc).isoformat(),
     })
-    SESSIONS[session_id] = history
 
     return ChatMessageOut(
         session_id=session_id,
-        answer=clean_answer,
-        status=status,
-        service=lead["service"] if lead else "",
-        name=lead["name"] if lead else "",
+        answer=answer,
+        status=result.get("status", "Interested"),
+        service=result.get("service", ""),
+        name=payload.user_name or "",
     )
 
 

@@ -131,6 +131,7 @@ def is_roman_urdu(message: str) -> bool:
         "chahiye", "chaiye", "nahi", "hai", "hoon", "hun", "karna", "karni",
         "kron", "krni", "karun", "bata", "batao", "batayein", "smj", "salam",
         "assalam", "shukriya", "aap", "ap", "apki", "aapki", "mery", "mere",
+        "thakan", "thak", "wazan", "shadi", "shohar", "biwi", "darr",
     ]
     words = re.findall(r"[a-zA-Z]+", msg)
     if not words:
@@ -263,6 +264,21 @@ def build_personal_concern_response(message: str, lang: str) -> str:
             return ("Yeh baat batane ka shukriya. Agar aap crisis mein hain, baraye meharbani foran local emergency service ya mental-health helpline se rabta karein — aapki safety sabse pehle hai. Aap akelay nahi hain. 🌿")
         return ("I'm really glad you told me. Please, if you're in crisis, reach out to a local emergency service or a mental-health helpline right away — your safety comes first. You are not alone. 🌿")
 
+    # Exhaustion / tiredness / burnout — broad depletion → Daily Energy Healing
+    if any(k in msg for k in [
+        "exhaust", "tired", "thakan", "thak", "fatigue", "drained",
+        "burnout", "burn out", "burned out", "no energy", "low energy",
+    ]):
+        if lang == "ur":
+            return ("Yeh baat share karne ka shukriya. Har waqt thaka hua mehsoos karna waqai bohat mushkil hota hai.\n\n"
+                    "Aapki situation ke liye hamari **Daily Energy Healing Support** ($250/month) sabse behtar fit hai — yeh Sufi Awaisi ka 30-session remote program hai jo jismani, zehni, jazbati aur nafsiyati behtari par comprehensive support deta hai. Iska maqsad overall balance, vitality aur inner strength bahal karna hai.\n\n"
+                    "Yeh complementary kaam hai — yeh professional medical ya psychological care ka replacement nahi.\n\n"
+                    "Kya aap chahenge ke main is program ki mazeed tafseel bataun? 🌿")
+        return ("Thank you for sharing that. Feeling exhausted all the time can be really overwhelming — it's a heavy thing to carry.\n\n"
+                "Based on what you're describing, the best fit is our **Daily Energy Healing Support** ($250/month) — a 30-session remote program by Sufi Awaisi designed as comprehensive support for physical, mental, emotional, and psychological wellbeing. It focuses on restoring overall balance, vitality and inner strength.\n\n"
+                "This is complementary work — it supports, but does not replace, professional medical or psychological care.\n\n"
+                "Would you like more details on this service? 🌿")
+
     # Trauma
     if any(k in msg for k in ["trauma", "ptsd", "abuse"]):
         if lang == "ur":
@@ -359,7 +375,7 @@ def fallback_response(message: str) -> str:
             if msg == g or msg.startswith(g + " ") or msg.startswith(g + ",") or msg.startswith(g + "!"):
                 return build_greeting(lang)
 
-    # 3. Service-specific question (already handled in main flow, but as fallback)
+    # 3. Service-specific question
     name, data = detect_service(message)
     if name:
         return data[lang]
@@ -405,6 +421,10 @@ def fallback_response(message: str) -> str:
         "marriage", "husband", "wife", "relationship", "shadi", "shohar",
         "weight", "wazan", "confidence", "self esteem", "fear", "phobia",
         "afraid", "darr", "grief", "loss", "lonely", "sad",
+        # Exhaustion / tiredness
+        "exhaust", "tired", "thakan", "thak", "fatigue", "drained",
+        "burnout", "burn out", "burned out", "no energy", "low energy",
+        "always tired", "always exhausted", "never have energy",
     ]
     if any(k in msg for k in personal_markers):
         return build_personal_concern_response(message, lang)
@@ -494,7 +514,6 @@ async def chat(payload: ChatMessageIn):
     # CASE 1: Active booking flow
     # ===========================================================
     if booking is not None:
-        # Escape check
         if is_escaping_flow(message):
             state["booking"] = None
             print(f"[FLOW-ESCAPE] User escaped booking flow: '{message}'")

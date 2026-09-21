@@ -217,6 +217,33 @@ def build_service_list(lang: str) -> str:
         return "\n".join(lines)
 
 
+def build_course_redirect(lang: str) -> str:
+    """Warm response when user asks about courses — MPA focuses on personalized services."""
+    if lang == "ur":
+        lines = [
+            "Shukriya poochne ka. Mind Power Artists is platform par courses ke bajaye **11 personalized international services** offer karta hai — sab remote aur one-to-one guidance ke saath.\n",
+            "Yeh hain hamari services:\n",
+        ]
+        for name, data in SERVICES.items():
+            lines.append(f"• **{name}** — {data['price']}")
+        lines.append(
+            "\nHar service personalized hai aur Sufi Awaisi ya unki team ki direct guidance ke saath di jati hai.\n\n"
+            "Kya aap batana chahenge ke aap kis cheez par kaam karna chahte hain? Main behtareen service recommend kar sakta hoon. 🌿"
+        )
+        return "\n".join(lines)
+    lines = [
+        "Thank you for asking. At Mind Power Artists, instead of group courses, we offer **11 personalized international services** — all remote and delivered with one-to-one guidance.\n",
+        "Here are the services we offer:\n",
+    ]
+    for name, data in SERVICES.items():
+        lines.append(f"• **{name}** — {data['price']}")
+    lines.append(
+        "\nEach service is personalized and delivered with direct guidance from Sufi Awaisi or his team.\n\n"
+        "Could you tell me a bit about what you'd like to work on? That way I can recommend the best service for you. 🌿"
+    )
+    return "\n".join(lines)
+
+
 def build_founder(lang: str) -> str:
     if lang == "ur":
         return ("Syed Asif Hussain — Sufi Awaisi ke naam se mashhoor — Mind Power Artists ke Founder & CEO hain.\n\n"
@@ -383,12 +410,19 @@ def fallback_response(message: str) -> str:
             if msg_clean == g or msg_clean.startswith(g + " "):
                 return build_greeting(lang)
 
-    # 3. Service-specific question
+    # 3. Course / training questions — MPA offers services, not courses
+    course_words = {"course", "courses", "training", "trainings", "class", "classes",
+                    "lesson", "lessons", "seminar", "seminars", "workshop", "workshops",
+                    "kurse", "kors", "sabaq", "sabaqs"}
+    if msg_clean in course_words or any(k in msg for k in ["course", "training", "class", "lesson", "seminar", "workshop"]):
+        return build_course_redirect(lang)
+
+    # 4. Service-specific question
     name, data = detect_service(message)
     if name:
         return data[lang]
 
-    # 4. All services / list — bare words + phrases (punctuation-tolerant)
+    # 5. All services / list — bare words + phrases (punctuation-tolerant)
     bare_service_words = {
         "services", "service", "list", "menu", "help", "options",
         "info", "information", "s", "catalog", "catalogue",
@@ -402,7 +436,7 @@ def fallback_response(message: str) -> str:
     if msg_clean in bare_service_words or any(k in msg for k in service_list_phrases):
         return build_service_list(lang)
 
-    # 5. Founder
+    # 6. Founder
     if any(k in msg for k in [
         "founder", "sufi awaisi", "who runs", "owner", "ceo",
         "about mpa", "about mind power", "who is behind", "kaun hai",
@@ -410,10 +444,10 @@ def fallback_response(message: str) -> str:
     ]):
         return build_founder(lang)
 
-    # 6. Pricing — bare words + phrases (punctuation-tolerant)
+    # 7. Pricing — bare words + phrases (punctuation-tolerant)
     bare_pricing_words = {
         "pricing", "price", "prices", "cost", "costs", "fees", "fee",
-        "charges", "charge", "rate", "rates", "fees?", "howmuch",
+        "charges", "charge", "rate", "rates", "howmuch",
     }
     pricing_phrases = [
         "how much", "cost of", "your fees", "your charges", "price list",
@@ -422,18 +456,18 @@ def fallback_response(message: str) -> str:
     if msg_clean in bare_pricing_words or any(k in msg for k in pricing_phrases):
         return build_pricing(lang)
 
-    # 7. Office
+    # 8. Office
     if any(k in msg for k in [
         "office", "location", "address", "where are you", "visit",
         "timing", "timings", "hours", "kahan",
     ]):
         return build_office(lang)
 
-    # 8. Reviews
+    # 9. Reviews
     if any(k in msg for k in ["review", "reviews", "testimonial", "testimonials", "trust", "feedback", "rating", "ratings"]):
         return build_reviews(lang)
 
-    # 9. Personal concerns — warm response
+    # 10. Personal concerns — warm response
     personal_markers = [
         "trauma", "ptsd", "abuse", "depress", "depression", "anxiety", "anxious",
         "stress", "stressed", "worry", "tension", "marriage", "husband", "wife",
@@ -448,14 +482,18 @@ def fallback_response(message: str) -> str:
     if any(k in msg for k in personal_markers):
         return build_personal_concern_response(message, lang)
 
-    # 10. Default
+    # 11. Default — always warm, never "I don't know"
     if lang == "ur":
-        return ("Main Mind Power Artists ki services mein madad kar sakta hoon. "
-                "Aap hamari services, pricing, ya founder ke baare mein pooch sakte hain — "
-                "ya 'contact' type karein takay hamari team aap se rabta kare. 🌿")
-    return ("I'm here to help with Mind Power Artists' services. "
-            "You can ask me about our programs, pricing, or the founder — "
-            "or type 'contact' to leave your details with our team. 🌿")
+        return ("Shukriya aapke message ka. Main aapki madad karne ke liye yahan hoon. 🌿\n\n"
+                "Aap hamari **11 international services**, **pricing**, **founder** ke baare mein pooch sakte hain — "
+                "ya kisi bhi service ka naam likhein jaise 'Hypnotherapy' ya 'Relationship Healing'.\n\n"
+                "Aur agar aap chahte hain ke hamari team aap se personally rabta kare, toh bas 'contact' type karein. "
+                "Main aapki madad ke liye mojood hoon.")
+    return ("Thank you for your message. I'm here to help. 🌿\n\n"
+            "You can ask me about our **11 international services**, **pricing**, or the **founder** — "
+            "or name any specific service like 'Hypnotherapy' or 'Relationship Healing'.\n\n"
+            "If you'd like our team to personally reach out, just type 'contact' and I'll take your details. "
+            "I'm here to help with whatever you need.")
 
 
 # =================================================================

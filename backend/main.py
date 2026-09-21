@@ -123,6 +123,13 @@ ESCAPE_KEYWORDS = [
 # =================================================================
 # HELPERS
 # =================================================================
+def strip_punctuation(text: str) -> str:
+    """Remove punctuation and collapse whitespace. Used for bare-word matching."""
+    text = re.sub(r"[^\w\s]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def is_roman_urdu(message: str) -> bool:
     """Detect Roman Urdu vs English."""
     msg = message.lower()
@@ -362,17 +369,18 @@ def build_personal_concern_response(message: str, lang: str) -> str:
 def fallback_response(message: str) -> str:
     """Rule-based fallback that works 100% without AI."""
     msg = message.lower().strip()
+    msg_clean = strip_punctuation(msg)
     lang = "ur" if is_roman_urdu(message) else "en"
 
     # 1. Crisis — check FIRST before anything
     if any(k in msg for k in ["suicide", "kill myself", "end my life", "self harm", "self-harm"]):
         return build_personal_concern_response(message, lang)
 
-    # 2. Greeting (short message with greeting word)
-    greetings = ["hi", "hello", "hey", "salam", "assalam", "helo", "hii", "hy"]
-    if len(msg) < 20:
+    # 2. Greeting (short message with greeting word, punctuation-tolerant)
+    greetings = ["hi", "hello", "hey", "salam", "assalam", "helo", "hii", "hy", "salamoalaikum", "assalamoalaikum"]
+    if len(msg_clean) < 25:
         for g in greetings:
-            if msg == g or msg.startswith(g + " ") or msg.startswith(g + ",") or msg.startswith(g + "!"):
+            if msg_clean == g or msg_clean.startswith(g + " "):
                 return build_greeting(lang)
 
     # 3. Service-specific question
@@ -380,15 +388,18 @@ def fallback_response(message: str) -> str:
     if name:
         return data[lang]
 
-    # 4. All services / list — includes bare words
-    bare_service_words = {"services", "service", "list", "menu", "help", "options", "info", "information", "s"}
+    # 4. All services / list — bare words + phrases (punctuation-tolerant)
+    bare_service_words = {
+        "services", "service", "list", "menu", "help", "options",
+        "info", "information", "s", "catalog", "catalogue",
+    }
     service_list_phrases = [
         "all services", "what services", "services list", "sare services",
         "which services", "list of services", "tell me about services",
         "what do you offer", "what do you provide", "available services",
         "show services", "your services", "tell me about all", "our services",
     ]
-    if msg in bare_service_words or any(k in msg for k in service_list_phrases):
+    if msg_clean in bare_service_words or any(k in msg for k in service_list_phrases):
         return build_service_list(lang)
 
     # 5. Founder
@@ -399,32 +410,37 @@ def fallback_response(message: str) -> str:
     ]):
         return build_founder(lang)
 
-    # 6. Pricing — includes bare words
-    bare_pricing_words = {"pricing", "price", "prices", "cost", "fees", "fee", "charges", "rate", "rates"}
+    # 6. Pricing — bare words + phrases (punctuation-tolerant)
+    bare_pricing_words = {
+        "pricing", "price", "prices", "cost", "costs", "fees", "fee",
+        "charges", "charge", "rate", "rates", "fees?", "howmuch",
+    }
     pricing_phrases = [
         "how much", "cost of", "your fees", "your charges", "price list",
-        "all prices", "qeemat", "kitna",
+        "all prices", "qeemat", "kitna", "kitne", "kimat",
     ]
-    if msg in bare_pricing_words or any(k in msg for k in pricing_phrases):
+    if msg_clean in bare_pricing_words or any(k in msg for k in pricing_phrases):
         return build_pricing(lang)
 
     # 7. Office
     if any(k in msg for k in [
         "office", "location", "address", "where are you", "visit",
-        "timing", "hours", "kahan",
+        "timing", "timings", "hours", "kahan",
     ]):
         return build_office(lang)
 
     # 8. Reviews
-    if any(k in msg for k in ["review", "reviews", "testimonial", "trust", "feedback", "rating"]):
+    if any(k in msg for k in ["review", "reviews", "testimonial", "testimonials", "trust", "feedback", "rating", "ratings"]):
         return build_reviews(lang)
 
     # 9. Personal concerns — warm response
     personal_markers = [
-        "trauma", "ptsd", "depress", "anxiety", "anxious", "stress",
-        "marriage", "husband", "wife", "relationship", "shadi", "shohar",
-        "weight", "wazan", "confidence", "self esteem", "fear", "phobia",
-        "afraid", "darr", "grief", "loss", "lonely", "sad",
+        "trauma", "ptsd", "abuse", "depress", "depression", "anxiety", "anxious",
+        "stress", "stressed", "worry", "tension", "marriage", "husband", "wife",
+        "relationship", "shadi", "shohar", "biwi", "divorce",
+        "weight", "wazan", "confidence", "self esteem", "self-esteem",
+        "self worth", "self-worth", "shy", "fear", "phobia",
+        "afraid", "scared", "darr", "grief", "loss", "lonely", "sad",
         "exhaust", "tired", "thakan", "thak", "fatigue", "drained",
         "burnout", "burn out", "burned out", "no energy", "low energy",
         "always tired", "always exhausted", "never have energy",

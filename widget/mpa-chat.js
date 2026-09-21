@@ -61,7 +61,6 @@
   function openPanel() {
     panel.classList.add("open");
     if (isMobile()) document.body.classList.add("mpa-chat-open");
-    // Delay focus slightly on mobile to avoid scroll jump
     setTimeout(() => input.focus(), 100);
     if (!opened) {
       opened = true;
@@ -78,11 +77,8 @@
   }
 
   btn.addEventListener("click", () => {
-    if (panel.classList.contains("open")) {
-      closePanel();
-    } else {
-      openPanel();
-    }
+    if (panel.classList.contains("open")) closePanel();
+    else openPanel();
   });
 
   closeBtn.addEventListener("click", closePanel);
@@ -98,36 +94,69 @@
     addMsg(text, "user");
     const typing = addMsg("OG is typing...", "bot typing");
 
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message: text,
-          user_name: "",
-          page_url: location.href,
-        }),
-      });
+    // Real-time: retry once if the network hiccups
+    let attempt = 0;
+    const maxAttempts = 2;
+    let success = false;
+    let lastError = null;
 
-      const data = await res.json();
-      typing.remove();
+    while (attempt < maxAttempts && !success) {
+      attempt++;
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: text,
+            user_name: "",
+            page_url: location.href,
+          }),
+        });
 
-      if (!res.ok) {
-        addMsg("Sorry, something went wrong. Please try again.", "bot");
-        return;
+        const data = await res.json();
+        typing.remove();
+
+        if (!res.ok) {
+          lastError = `HTTP ${res.status}`;
+          if (attempt < maxAttempts) {
+            // Brief retry delay
+            await new Promise((r) => setTimeout(r, 800));
+            continue;
+          }
+          // Final attempt failed
+          addMsg(
+            "I'm having a brief technical moment right now. Please try again in a moment — " +
+            "or visit www.mindpowerartists.com to reach our team directly. 🌿",
+            "bot"
+          );
+          success = true;
+          return;
+        }
+
+        addMsg(data.answer || "Sorry, I couldn't process that. Please try again.", "bot");
+        success = true;
+      } catch (e) {
+        lastError = e.message || "network error";
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        typing.remove();
+        addMsg(
+          "Looks like my connection dropped for a second. Could you try sending that again? " +
+          "If it keeps happening, you can reach our team at www.mindpowerartists.com. 🌿",
+          "bot"
+        );
+        success = true;
+      } finally {
+        // Only re-enable on last attempt
+        if (success || attempt >= maxAttempts) {
+          input.disabled = false;
+          sendBtn.disabled = false;
+          input.focus();
+        }
       }
-
-      addMsg(data.answer || "Sorry, I couldn't process that.", "bot");
-    } catch (e) {
-      typing.remove();
-      addMsg("Network error. Please check your connection and try again.", "bot");
-    } finally {
-      input.disabled = false;
-      sendBtn.disabled = false;
-      input.focus();
     }
   }
 

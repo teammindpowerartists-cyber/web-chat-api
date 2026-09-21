@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# session_id -> {"history": [...], "booking": {"service": str, "name": str, "phone": str, "awaiting": str}}
+# session_id -> {"history": [...], "booking": {...}}
 SESSIONS: dict = {}
 
 LEAD_WEBHOOK_URL = os.getenv("LEAD_WEBHOOK_URL", "").strip()
@@ -83,7 +83,7 @@ SERVICE_KEYWORDS = {
     "emotional healing": "Remote Emotional & Psychological Healing",
     "emotional support": "Remote Emotional & Psychological Healing",
     "psychological healing": "Remote Emotional & Psychological Healing",
-    # Energy / General
+    # Energy
     "energy healing": "Daily Energy Healing Support",
     "energy support": "Daily Energy Healing Support",
     "energy boost": "Daily Energy Healing Support",
@@ -100,7 +100,6 @@ BOOKING_INTENT_KEYWORDS = [
 
 
 def detect_service(message: str):
-    """Return canonical service name if the message names one, else None."""
     msg_lower = message.lower().strip()
     for keyword in sorted(SERVICE_KEYWORDS.keys(), key=len, reverse=True):
         if keyword in msg_lower:
@@ -114,12 +113,10 @@ def has_booking_intent(message: str) -> bool:
 
 
 def looks_like_phone(message: str) -> bool:
-    """Contains at least 7 digits."""
     return len(re.sub(r"\D", "", message)) >= 7
 
 
 def looks_like_name(message: str) -> bool:
-    """Rough check: 1-4 words, no digits, not a service name."""
     text = message.strip()
     if not text or len(text) > 60:
         return False
@@ -127,7 +124,6 @@ def looks_like_name(message: str) -> bool:
         return False
     if "?" in text or "!" in text:
         return False
-    # If it matches a service keyword, it's not a name
     if detect_service(text):
         return False
     words = text.split()
@@ -137,12 +133,10 @@ def looks_like_name(message: str) -> bool:
 
 
 # ---------------------------------------------------------------
-# LEAD CAPTURE (Google Sheets)
+# LEAD CAPTURE (Google Sheets) with fallback logging
 # ---------------------------------------------------------------
-async def send_lead_to_sheets(lead: dict, session_id: str) -> None:
-    if not LEAD_WEBHOOK_URL:
-        print("[LEAD] No LEAD_WEBHOOK_URL set — lead was NOT saved.")
-        return
+async def send_lead_to_sheets(lead: dict, session_id: str) -> bool:
+    """Try to send the lead to Google Sheets. Returns True on success."""
     payload = {
         "session_id": session_id,
         "name": lead["name"],
@@ -150,12 +144,26 @@ async def send_lead_to_sheets(lead: dict, session_id: str) -> None:
         "service": lead["service"],
         "captured_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    if not LEAD_WEBHOOK_URL:
+        print(f"[LEAD-FALLBACK] No LEAD_WEBHOOK_URL — dumping lead:")
+        print(f"[LEAD-FALLBACK] {payload}")
+        return False
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.post(LEAD_WEBHOOK_URL, json=payload)
-            print(f"[LEAD] Saved → {r.status_code}")
+            if r.status_code < 400:
+                print(f"[LEAD] Saved → {r.status_code}")
+                return True
+            else:
+                print(f"[LEAD-FALLBACK] Sheet returned {r.status_code}. Dumping lead:")
+                print(f"[LEAD-FALLBACK] {payload}")
+                return False
     except Exception as e:
-        print(f"[LEAD] Webhook failed: {e}")
+        print(f"[LEAD-FALLBACK] Webhook failed: {e}. Dumping lead:")
+        print(f"[LEAD-FALLBACK] {payload}")
+        return False
 
 
 # ---------------------------------------------------------------
@@ -208,7 +216,7 @@ async def chat(payload: ChatMessageIn):
         name = booking.get("name") or ""
         phone = booking.get("phone") or ""
 
-        # STEP 0: We asked "which service?" and are waiting for the service
+        # STEP 0 — we asked "which service?", user must name it
         if not service:
             detected = detect_service(message)
             booking["service"] = detected if detected else message.strip()
@@ -229,17 +237,16 @@ async def chat(payload: ChatMessageIn):
                 name="",
             )
 
-        # STEP 1: We asked for the name
+        # STEP 1 — we asked for name
         if not name:
             if looks_like_phone(message):
-                # User gave phone before name — capture it, still ask for name
                 booking["phone"] = message
                 reply = "Thank you. And could you please share your full name?"
             else:
                 booking["name"] = message
                 reply = f"Thank you, {message}. And your phone number with country code?"
 
-        # STEP 2: We asked for the phone
+        # STEP 2 — we asked for phone
         elif not phone:
             if looks_like_phone(message):
                 booking["phone"] = message
@@ -253,11 +260,11 @@ async def chat(payload: ChatMessageIn):
                     f"Thank you, {booking['name']}! Our team member will contact you soon "
                     f"regarding {booking['service']}. 🌿"
                 )
-                state["booking"] = None  # clear flow
+                state["booking"] = None
             else:
                 reply = "Thank you. Could you please share your phone number with country code?"
 
-        # STEP 3: Safety fallback
+        # STEP 3 — safety fallback
         else:
             state["booking"] = None
             reply = "Thank you! Our team member will be in touch soon. 🌿"
@@ -309,7 +316,7 @@ async def chat(payload: ChatMessageIn):
         )
 
     # ===========================================================
-    # CASE 3: Everything else goes to the AI
+    # CASE 3: Everything else goes to the AI (with natural fallback)
     # ===========================================================
     try:
         result = await generate_reply(
@@ -317,10 +324,17 @@ async def chat(payload: ChatMessageIn):
             user_name=payload.user_name or "Visitor",
             history=history[:-1],
         )
+        answer = result.get("answer", "").strip()
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI error: {exc}")
+        print(f"[AI-FALLBACK] generate_reply failed: {exc}")
+        answer = (
+            "I'm having a brief hiccup on my side right now — my apologies for that. "
+            "If you'd like, you can type **'contact'** and I'll take your details so our "
+            "team can reach out to you directly. Or just try your message again in a moment. 🌿"
+        )
 
-    answer = result.get("answer", "").strip() or "Sorry, please try again."
+    if not answer:
+        answer = "I'm sorry, I didn't quite catch that. Could you please rephrase? 🌿"
 
     history.append({
         "role": "assistant",
@@ -331,8 +345,8 @@ async def chat(payload: ChatMessageIn):
     return ChatMessageOut(
         session_id=session_id,
         answer=answer,
-        status=result.get("status", "Interested"),
-        service=result.get("service", ""),
+        status=result.get("status", "Interested") if "result" in locals() else "Interested",
+        service=result.get("service", "") if "result" in locals() else "",
         name=payload.user_name or "",
     )
 

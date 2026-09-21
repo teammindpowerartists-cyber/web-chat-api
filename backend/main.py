@@ -380,13 +380,15 @@ def fallback_response(message: str) -> str:
     if name:
         return data[lang]
 
-    # 4. All services / list
-    if any(k in msg for k in [
+    # 4. All services / list — includes bare words
+    bare_service_words = {"services", "service", "list", "menu", "help", "options", "info", "information", "s"}
+    service_list_phrases = [
         "all services", "what services", "services list", "sare services",
         "which services", "list of services", "tell me about services",
         "what do you offer", "what do you provide", "available services",
-        "show services", "your services", "tell me about all",
-    ]):
+        "show services", "your services", "tell me about all", "our services",
+    ]
+    if msg in bare_service_words or any(k in msg for k in service_list_phrases):
         return build_service_list(lang)
 
     # 5. Founder
@@ -397,11 +399,13 @@ def fallback_response(message: str) -> str:
     ]):
         return build_founder(lang)
 
-    # 6. Pricing
-    if any(k in msg for k in [
-        "pricing", "how much", "cost of", "your fees", "your charges",
-        "price list", "all prices", "qeemat", "kitna",
-    ]):
+    # 6. Pricing — includes bare words
+    bare_pricing_words = {"pricing", "price", "prices", "cost", "fees", "fee", "charges", "rate", "rates"}
+    pricing_phrases = [
+        "how much", "cost of", "your fees", "your charges", "price list",
+        "all prices", "qeemat", "kitna",
+    ]
+    if msg in bare_pricing_words or any(k in msg for k in pricing_phrases):
         return build_pricing(lang)
 
     # 7. Office
@@ -412,7 +416,7 @@ def fallback_response(message: str) -> str:
         return build_office(lang)
 
     # 8. Reviews
-    if any(k in msg for k in ["review", "testimonial", "trust", "feedback", "rating"]):
+    if any(k in msg for k in ["review", "reviews", "testimonial", "trust", "feedback", "rating"]):
         return build_reviews(lang)
 
     # 9. Personal concerns — warm response
@@ -421,7 +425,6 @@ def fallback_response(message: str) -> str:
         "marriage", "husband", "wife", "relationship", "shadi", "shohar",
         "weight", "wazan", "confidence", "self esteem", "fear", "phobia",
         "afraid", "darr", "grief", "loss", "lonely", "sad",
-        # Exhaustion / tiredness
         "exhaust", "tired", "thakan", "thak", "fatigue", "drained",
         "burnout", "burn out", "burned out", "no energy", "low energy",
         "always tired", "always exhausted", "never have energy",
